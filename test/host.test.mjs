@@ -92,12 +92,13 @@ test("loads hooks, the local command and footer through the real host loader wit
   );
 });
 
-test("native commands, completion and bells persist across reset/reopen, stay session-local, and gate fake notifications", { ...hostTest, timeout: 15000 }, async () => {
+test("native commands, completion and bells persist across reset/reopen, stay session-local, and gate fake notifications", { ...hostTest, timeout: 15000 }, async (t) => {
   const f = await fixture(), capabilities = f.host.tui.getCapabilities();
   f.host.tui.setCapabilities({ ...capabilities, trueColor: true });
   try {
     await f.mount(); await f.terminal.flush();
     const effectiveOn = environmentEnabled();
+    const toasts = t.mock.method(f.app.ui, "addExtensionToast"), notices = t.mock.method(f.app.ui, "setNotice");
     assertBell(f, effectiveOn);
     assert.equal(await f.app.chat.harness.snapshot(f.Settings, f.context), undefined, "Rendering must not create settings.");
     const suggest = (text) => f.app.chat.completion.getSuggestions([text], 0, text.length, { signal: new AbortController().signal, force: true });
@@ -105,6 +106,14 @@ test("native commands, completion and bells persist across reset/reopen, stay se
     assert.deepEqual((await suggest("/notifications of"))?.items.map((item) => item.value), ["off"]);
     await f.send("/notifications"); await until(() => !f.app.ui.busy); await f.terminal.flush();
     assert.equal((await f.app.chat.harness.snapshot(f.Settings, f.context)).enabled, false); assertBell(f, false);
+    assert.equal(toasts.mock.callCount(), 1);
+    const [source, text, options] = toasts.mock.calls[0].arguments;
+    assert.equal(source, "pi-d-notification /notifications"); assert.match(text, /^Notifications off for this session\./);
+    assert.deepEqual(options, { type: effectiveOn ? "success" : "info" });
+    assert.match(f.terminal.text(), /Notifications off for this session\./);
+    const footer = f.terminal.text().split("\n").at(-1) ?? "";
+    assert.match(footer, /ready/); assert.match(footer, /ctx ~/); assert(!footer.includes("Notifications"));
+    assert(notices.mock.calls.every((call) => !call.arguments[0].startsWith("Notifications")));
     await f.send("/notifications yes"); await until(() => !f.app.ui.busy); await f.terminal.flush();
     assert.equal(f.app.ui.composer.editor.getText(), "/notifications yes"); assert.match(f.terminal.text(), /Use \/notifications/);
     await f.send("/help"); await until(() => f.terminal.text().includes("Toggle reply notifications"));
@@ -158,7 +167,7 @@ test("the production hook reads the exact session document written by its comman
   try {
     const chat = await f.make(f.first), signal = new AbortController().signal;
     try {
-      await f.extension.piD.commands[0].execute("off", { harness: chat.harness, conversation: chat.conversation, signal, context: f.context, notify() {} });
+      await f.extension.piD.commands[0].execute("off", { harness: chat.harness, conversation: chat.conversation, signal, context: f.context, toast() {} });
       const reads = [], memos = new Map();
       await f.extension.hooks[0].handlers.onYield({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Never deliver this fixture." }] }, {
         conversationId: f.host.sdk.ROOT_CONVERSATION_ID,

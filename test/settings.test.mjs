@@ -3,10 +3,12 @@ import test from "node:test";
 import { BELL, MUTED_BELL, createControls, environmentEnabled, notificationSettings } from "../src/settings.mjs";
 
 function fixture({ state, env = {}, signal = new AbortController().signal } = {}) {
-  const Settings = { definition: notificationSettings }, notices = [];
+  const Settings = { definition: notificationSettings }, toasts = [];
   let value = structuredClone(state), commits = 0, reads = 0, line = Promise.resolve();
   const api = {
-    signal, context: { abortSignal: signal }, notify: (message) => notices.push(message),
+    signal, context: { abortSignal: signal },
+    toast: (text, options) => toasts.push({ text, ...options }),
+    notify: () => assert.fail("Toggle confirmation must not replace the bottom information bar."),
     harness: {
       async snapshot(token, context) {
         assert.equal(token, Settings); context.abortSignal?.throwIfAborted(); reads++;
@@ -26,7 +28,7 @@ function fixture({ state, env = {}, signal = new AbortController().signal } = {}
     },
   };
   const controls = createControls(Settings, { env }), command = controls.commands[0];
-  return { api, controls, command, notices, get value() { return value; }, get commits() { return commits; }, get reads() { return reads; } };
+  return { api, controls, command, toasts, get value() { return value; }, get commits() { return commits; }, get reads() { return reads; } };
 }
 
 const on = [{ text: BELL, tone: "gold", strikethrough: false }];
@@ -47,11 +49,12 @@ test("the bare command toggles atomically, while on/off are explicit and idempot
   assert.equal(f.command.name, "notifications"); assert.equal(f.command.argumentHint, "[on|off]");
   await f.command.execute("", f.api);
   assert.deepEqual(f.value, { enabled: false }); assert.deepEqual(await f.controls.footer(f.api), off);
-  assert.equal(f.notices.at(-1), "Notifications off for this session.");
+  assert.deepEqual(f.toasts.at(-1), { text: "Notifications off for this session.", type: "success" });
   await f.command.execute("", f.api); assert.deepEqual(f.value, { enabled: true });
   for (const argument of ["off", "off", "on", "on"]) {
     await f.command.execute(argument, f.api);
     assert.equal(f.value.enabled, argument === "on");
+    assert.deepEqual(f.toasts.at(-1), { text: `Notifications ${argument} for this session.`, type: "success" });
   }
   await Promise.all([f.command.execute("", f.api), f.command.execute("", f.api)]);
   assert.deepEqual(f.value, { enabled: true }); assert.deepEqual(await f.controls.footer(f.api), on);
@@ -65,7 +68,7 @@ test("on/off completion is static and invalid arguments do not touch state", asy
   for (const argument of ["yes", "on off", "ON", "toggle"]) {
     await assert.rejects(f.command.execute(argument, f.api), /Use \/notifications/);
   }
-  assert.equal(f.value, undefined); assert.equal(f.commits, 0); assert.equal(f.reads, 0); assert.deepEqual(f.notices, []);
+  assert.equal(f.value, undefined); assert.equal(f.commits, 0); assert.equal(f.reads, 0); assert.deepEqual(f.toasts, []);
 });
 
 test("environment disable wins over session on, explains the override and leaves the saved preference intact", async () => {
@@ -75,20 +78,21 @@ test("environment disable wins over session on, explains the override and leaves
     assert.deepEqual(await f.controls.footer(f.api), off);
     await f.command.execute("on", f.api);
     assert.deepEqual(f.value, { enabled: true }); assert.deepEqual(await f.controls.footer(f.api), off);
-    assert.match(f.notices.at(-1), /PI_D_NOTIFY disables alerts/);
+    assert.match(f.toasts.at(-1).text, /PI_D_NOTIFY disables alerts/);
+    assert.equal(f.toasts.at(-1).type, "info");
     delete env.PI_D_NOTIFY;
     assert.deepEqual(await f.controls.footer(f.api), on);
   }
 });
 
-test("cancellation and failed native writes do not publish a success notice or replace the preference", async () => {
+test("cancellation and failed native writes do not publish a toast or replace the preference", async () => {
   const controller = new AbortController(), f = fixture({ state: { enabled: false }, signal: controller.signal });
   controller.abort(); await assert.rejects(f.command.execute("on", f.api), { name: "AbortError" });
-  assert.deepEqual(f.value, { enabled: false }); assert.equal(f.commits, 0); assert.deepEqual(f.notices, []);
+  assert.deepEqual(f.value, { enabled: false }); assert.equal(f.commits, 0); assert.deepEqual(f.toasts, []);
   const g = fixture({ state: { enabled: false } });
   g.api.harness.commit = async () => { throw new Error("Store unavailable."); };
   await assert.rejects(g.command.execute("on", g.api), /Store unavailable/);
-  assert.deepEqual(g.value, { enabled: false }); assert.deepEqual(g.notices, []);
+  assert.deepEqual(g.value, { enabled: false }); assert.deepEqual(g.toasts, []);
 });
 
 test("footer read failures propagate to the host without creating or overwriting settings", async () => {

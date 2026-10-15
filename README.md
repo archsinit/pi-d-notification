@@ -9,7 +9,7 @@ macOS reply notifications for [pi-d](https://github.com/archsinit/pi-d), impleme
 
 ## Usage
 
-Requires macOS and pi-d with the command/footer extension API ([`2a2744e`](https://github.com/archsinit/pi-d/commit/2a2744e) or newer). No extension dependency installation or build step is needed.
+Requires macOS and pi-d with the command/footer and toast extension APIs ([`67d718c`](https://github.com/archsinit/pi-d/commit/67d718c) or newer). No extension dependency installation or build step is needed.
 
 ```sh
 git clone https://github.com/archsinit/pi-d-notification.git
@@ -30,7 +30,7 @@ Previews may contain sensitive text and appear on the lock screen. Adjust macOS 
 | `/notifications on` | Enable them |
 | `/notifications off` | Mute them |
 
-The footer shows a **gold bell** when enabled and a **gray crossed-out bell** when muted. `on`/`off` complete with Tab; the command appears in `/help`. Commands are local and make no model request.
+The footer shows a **gold bell** when enabled and a **gray crossed-out bell** when muted. `on`/`off` complete with Tab; the command appears in `/help`. Commands are local and make no model request. Confirmation appears in a temporary toast, leaving the bottom information bar visible.
 
 Notifications default to on. The preference is saved in the session's native Durable document, survives reopen and `/new`, and does not change other sessions. Muted replies are not replayed after unmuting. Focus suppression still applies when enabled.
 

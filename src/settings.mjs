@@ -31,7 +31,8 @@ export function createControls(Settings, { env = process.env } = {}) {
           return settings.enabled;
         }, api.context);
         api.signal.throwIfAborted();
-        api.notify(`Notifications ${enabled ? "on" : "off"} for this session.${!environmentEnabled(env) ? " PI_D_NOTIFY disables alerts for this process." : ""}`);
+        const overridden = !environmentEnabled(env);
+        api.toast(`Notifications ${enabled ? "on" : "off"} for this session.${overridden ? " PI_D_NOTIFY disables alerts for this process." : ""}`, { type: overridden ? "info" : "success" });
       },
     }],
     async footer(api) {
