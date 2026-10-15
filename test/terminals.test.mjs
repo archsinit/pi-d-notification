@@ -103,6 +103,30 @@ test("Ghostty delegates focus-aware banner and sound suppression, without subpro
   assert.deepEqual(frames, ["\x1b]777;notify;pi-d · project;Done. Tests passed.\x1b\\"]);
 });
 
+test("a mute applied during WezTerm focus detection prevents both the native alert and sound", async () => {
+  let enabled = true;
+  const { run, calls } = runner(otherApp);
+  const result = await notifyUser(payload, options(async (...args) => {
+    const reply = await run(...args); enabled = false; return reply;
+  }, { shouldNotify: async () => enabled }));
+  assert.deepEqual(result, { status: "muted", terminal: "wezterm" });
+  assert.equal(calls.length, 1); assert.equal(calls[0][1][3], FOREGROUND_SCRIPT);
+});
+
+test("Ghostty checks the session mute immediately before writing its notification sequence", async () => {
+  const frames = [];
+  const stdout = { isTTY: true, write(frame, callback) { frames.push(frame); callback(); } };
+  const result = await notifyUser(payload, { env: { TERM_PROGRAM: "ghostty" }, platform: "darwin", stdout,
+    shouldNotify: async () => false, run: () => assert.fail("No subprocess expected.") });
+  assert.deepEqual(result, { status: "muted", terminal: "ghostty" }); assert.deepEqual(frames, []);
+});
+
+test("a failed final settings check cannot dispatch an alert", async () => {
+  const { run, calls } = runner(otherApp);
+  await assert.rejects(notifyUser(payload, options(run, { shouldNotify: async () => { throw new Error("Settings unavailable."); } })), /Settings unavailable/);
+  assert.equal(calls.length, 1);
+});
+
 test("OSC fields cannot inject delimiters, bells, clipboard escapes, or new notifications", () => {
   const frame = ghosttySequence({ title: "pi-d;fake\x07", body: "ok\x1b]52;c;PRIVATE\x07;tail\u009c\nend" });
   assert.equal(frame, "\x1b]777;notify;pi-d,fake;ok,tail end\x1b\\");

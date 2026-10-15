@@ -54,6 +54,36 @@ test("a focused skip is persisted rather than turning into an alert after recove
   assert.equal(attempts, 1);
 });
 
+test("muted replies are durably skipped and unmuting cannot replay them", async () => {
+  let enabled = false, workspaceReads = 0, settingReads = 0;
+  const f = fixture({
+    readEnabled: async () => { settingReads++; return enabled; },
+    readWorkspace: async () => { workspaceReads++; return "/project"; },
+  });
+  await f.onYield(answer, f.api, context);
+  assert.equal(f.notifications.length, 0); assert.equal(workspaceReads, 0); assert.equal(f.memos.size, 1);
+  enabled = true; await createOnYield(f.settings)(answer, f.api, context);
+  assert.equal(f.notifications.length, 0); assert.equal(settingReads, 1); assert.deepEqual(f.errors, []);
+  const next = fixture({ readEnabled: f.settings.readEnabled });
+  await next.onYield(answer, next.api, context); assert.equal(next.notifications.length, 1);
+});
+
+test("a mute applied during preparation is rechecked before dispatch", async () => {
+  let enabled = true;
+  const f = fixture({ readEnabled: async () => enabled, readWorkspace: async () => { enabled = false; return "/project"; } });
+  await f.onYield(answer, f.api, context);
+  assert.equal(f.notifications.length, 0); assert.equal(f.memos.size, 1); assert.deepEqual(f.errors, []);
+});
+
+test("delivery receives a live settings guard for its final check after focus detection", async () => {
+  let enabled = true, checks = 0, attempts = 0;
+  const f = fixture({ readEnabled: async () => { checks++; return enabled; }, notify: async (_payload, options) => {
+    attempts++; enabled = false; assert.equal(await options.shouldNotify(), false);
+  } });
+  await f.onYield(answer, f.api, context);
+  assert.equal(attempts, 1); assert.equal(checks, 3); assert.deepEqual(f.errors, []);
+});
+
 test("tool rounds, failures, empty answers, and child conversations are ignored", async () => {
   const f = fixture();
   for (const message of [
@@ -70,8 +100,9 @@ test("tool rounds, failures, empty answers, and child conversations are ignored"
 
 test("disabled and unsupported-platform hooks never read or write native state", async () => {
   for (const extra of [{ env: { PI_D_NOTIFY: "0" } }, { env: { PI_D_NOTIFY: "false" } }, { platform: "linux" }]) {
-    const f = fixture(extra);
+    const f = fixture({ ...extra, readEnabled: async () => assert.fail("Disabled hooks must not read settings.") });
     await f.onYield(answer, f.api, context);
+    assert.deepEqual(f.errors, []);
     assert.equal(f.notifications.length, 0);
     assert.equal(f.memos.size, 0);
   }
@@ -82,6 +113,7 @@ test("notification, focus, workspace, and memo errors never escape the hook", as
   for (const extra of [
     { notify: async () => { throw problem; } },
     { readWorkspace: async () => { throw problem; } },
+    { readEnabled: async () => { throw problem; } },
   ]) {
     const f = fixture(extra);
     await assert.doesNotReject(f.onYield(answer, f.api, context));
@@ -94,6 +126,13 @@ test("notification, focus, workspace, and memo errors never escape the hook", as
   assert.equal(f.notifications.length, 0);
   const g = fixture({ notify: async () => { throw problem; }, onError: () => { throw problem; } });
   await assert.doesNotReject(g.onYield(answer, g.api, context));
+});
+
+test("failed settings reads skip delivery and are not replayed", async () => {
+  const problem = new Error("Settings unavailable.");
+  const f = fixture({ readEnabled: async () => { throw problem; } });
+  await f.onYield(answer, f.api, context); await f.onYield(answer, f.api, context);
+  assert.deepEqual(f.errors, [problem]); assert.equal(f.notifications.length, 0); assert.equal(f.memos.size, 1);
 });
 
 test("a failed external attempt is not replayed", async () => {
@@ -115,6 +154,13 @@ test("cancellation before the hook or while preparing a notification is silent",
   await g.onYield(answer, g.api, { abortSignal: during.signal });
   assert.equal(g.notifications.length, 0);
   assert.equal(g.errors.length, 0);
+});
+
+test("cancellation during a settings read silently suppresses delivery", async () => {
+  const controller = new AbortController();
+  const f = fixture({ readEnabled: async () => { controller.abort(); return true; } });
+  await f.onYield(answer, f.api, { abortSignal: controller.signal });
+  assert.equal(f.notifications.length, 0); assert.deepEqual(f.errors, []); assert.equal(f.memos.size, 1);
 });
 
 test("preview length is bounded with a safe default for invalid settings", async () => {

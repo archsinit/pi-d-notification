@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { answerText, notificationTitle, preview } from "./preview.mjs";
 import { notifyUser } from "./terminals.mjs";
+import { environmentEnabled } from "./settings.mjs";
 
 const HANDLED_MEMO = "pi-d-notification.handled.v1";
 
@@ -19,6 +20,7 @@ function reportError(error, env) {
 /** Invocation-scoped effects only; no timers, processes, or listeners at load time. */
 export function createOnYield({
   rootConversationId,
+  readEnabled = async () => true,
   readWorkspace = async () => process.cwd(),
   notify = notifyUser,
   env = process.env,
@@ -27,7 +29,7 @@ export function createOnYield({
 }) {
   return async function onYield(answer, api, context) {
     const signal = context.abortSignal;
-    if (platform !== "darwin" || ["0", "false"].includes(env.PI_D_NOTIFY) ||
+    if (platform !== "darwin" || !environmentEnabled(env) ||
         api.conversationId !== rootConversationId || signal?.aborted) return;
     try {
       const text = answerText(answer);
@@ -37,12 +39,19 @@ export function createOnYield({
       // candidate also prevents two concurrent invocations from both winning.
       const candidate = randomUUID();
       if (await api.memo(HANDLED_MEMO, candidate, context) !== candidate || signal?.aborted) return;
+      const shouldNotify = async () => {
+        if (signal?.aborted || !environmentEnabled(env)) return false;
+        return !!(await readEnabled(api, context)) && !signal?.aborted;
+      };
+      // Muted replies are claimed too: unmuting must not replay an old answer.
+      if (!await shouldNotify()) return;
       const workspace = await readWorkspace(api, context);
       signal?.throwIfAborted();
+      if (!await shouldNotify()) return;
       await notify({
         title: notificationTitle(workspace),
         body: preview(text, previewLength(env)),
-      }, { env, platform, signal });
+      }, { env, platform, signal, shouldNotify });
     } catch (error) {
       // A notification, focus query, or permission failure must not fail generation.
       if (!signal?.aborted) {

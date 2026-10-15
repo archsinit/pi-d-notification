@@ -110,6 +110,7 @@ export async function notifyUser(payload, {
   signal,
   run = runCommand,
   stdout = process.stdout,
+  shouldNotify = async () => true,
 } = {}) {
   signal?.throwIfAborted();
   if (platform !== "darwin") return { status: "unsupported-platform" };
@@ -118,6 +119,7 @@ export async function notifyUser(payload, {
   if (terminal === "ghostty") {
     // Ghostty attaches this notification to the originating surface and suppresses
     // its banner AND sound when that surface is focused. No stdin listeners.
+    if (!await shouldNotify()) return { status: "muted", terminal };
     signal?.throwIfAborted();
     await new Promise((resolve, reject) => {
       stdout.write(ghosttySequence(payload), (error) => error ? reject(error) : resolve());
@@ -128,6 +130,9 @@ export async function notifyUser(payload, {
   const focus = await weztermFocus({ env, signal, run });
   signal?.throwIfAborted();
   if (focus.state !== "away") return { status: focus.state, terminal };
+  // Focus queries can take time; honor a mute applied while they were in flight.
+  if (!await shouldNotify()) return { status: "muted", terminal };
+  signal?.throwIfAborted();
   const result = await run("/usr/bin/osascript", ["-l", "JavaScript", "-e", NOTIFICATION_SCRIPT,
     "--", JSON.stringify({ title: payload.title, body: payload.body, frontmostPid: focus.frontmostPid })], { signal });
   return { status: result === "requested" ? "requested" : "focus-changed", terminal };
