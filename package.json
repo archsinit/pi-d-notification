@@ -1,0 +1,14 @@
+{
+  "name": "pi-d-notification",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Focus-aware macOS reply notifications for pi-d, implemented entirely as a Durable extension.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "doctor": "node scripts/doctor.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
